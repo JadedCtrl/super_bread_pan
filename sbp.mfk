@@ -1,0 +1,546 @@
+// SUPER BREAD PAN
+// SUPERPANSKATOL'
+// Based on Garydos'es Pong example
+
+import random
+import nes_joy
+
+segment(chrrom) const array graphics @ $0000 = file("tileset.chr")
+
+// ============================================================================
+// STRUCTS
+// ============================================================================
+// sprite layout in oam
+struct Sprite {
+	byte y,
+	byte tile,
+	byte attrs,
+	byte x
+}
+
+// abstraction for 16x16 animated monstrosities
+struct Entity {
+	Sprite top0,    // left side, for the record
+	Sprite bottom0,
+	Sprite top1,    // right side, please kill me
+	Sprite bottom1,
+
+	byte movement,  // 0-3; idle, walk, jump/fall
+	byte direction,
+	byte frame      // internal count used for animation
+}
+
+// ============================================================================
+// VARIABLES
+// ============================================================================
+byte i
+byte score1
+array oam_buffer [256] @$200 // sprite buffer
+word framecounter
+Entity sam @$204  // player character
+volatile Gamestate gamestate // the current Gamestate
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+const array pallete = [
+  $22,$29,$1A,$0F,  $22,$36,$17,$0F,  $22,$30,$21,$0F,  $22,$27,$17,$0F, 
+  $22,$1C,$15,$14, $0F,$18,$28,$0F,  $22,$1C,$15,$14,  $22,$02,$38,$3C
+]
+
+const array attribute = [
+  %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101,
+  %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101,
+  %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101
+]
+
+enum Gamestate {
+	STATETITLE, 
+	STATEPLAYING, 
+	STATEGAMEOVER 
+}
+
+const array scorebackground = "P1 Score-	" ascii
+const array gameover_msg = "G A M E	O V E R" ascii
+const array title_msg = "Press Start" ascii
+
+// -------------------------------------
+// LOCATIONS
+// -------------------------------------
+// vram locations declared as constants for readability/convenience
+// *note that these do not correlate to CPU ram locations*
+const word ppu_pallete_ram = $3F00
+const word ppu_nametable_ram = $2000
+const word ppu_nametable_0_attr_ram = $23C0
+
+// -------------------------------------
+// LEVEL
+// -------------------------------------
+const byte RIGHTWALL	= $F4 
+const byte TOPWALL	= $18
+const byte BOTTOMWALL	= $B0
+const byte LEFTWALL	= $04
+
+// -------------------------------------
+// SAM
+// -------------------------------------
+// i don't actually remember if the super crate box guy is named sam or not
+// or if he even has a name?
+const byte SAM_HEIGHT	= $20  // height of each paddle in pixels
+const byte SAM_ATTR		= %00000001
+const byte SAM_ATTR_HFLIP 	= %01000001
+const byte SAM_ATTR_VFLIP	= %10000001
+const byte SAM_ATTR_HVFLIP	= %11000001 
+
+// -------------------------------------
+// ANIMATIONS
+// -------------------------------------
+// all Entity (16x16)'s animations are assumed by update_entity() to consist of
+// 5 frames. An animation array just contains 20 locations in CHR, four per
+// frame, in this totally logical order:
+//     top-left, bottom-left, top-right, bottom-right
+const array SAM_IDLE = [ $44, $54, $45, $55,
+			 $46, $56, $47, $57,
+			 $48, $58, $49, $59,
+			 $4A, $5A, $4B, $5B,
+			 $4C, $5C, $4D, $5D ]
+
+const array SAM_WALK = [ $64, $74, $65, $75,
+			 $66, $76, $67, $77,
+			 $68, $78, $69, $79,
+			 $6A, $7A, $6B, $7B,
+			 $6C, $7C, $6D, $7D ]
+
+
+// ============================================================================
+// CORE
+// ============================================================================
+// quite important uwu
+
+void main() {
+	gamestate = STATETITLE
+	title_init()
+	while(true){} // all work is done in nmi
+	// thnx nmi <3
+}
+
+// run at each non-maskable interrupt
+// generated during each vertical blanking interval. cool
+void nmi() {
+	// push all sprite info to the ppu (picture processing unit)
+	// through dma (direct memory access) transfer
+	ppu_oam_dma_write( oam_buffer.addr.hi )
+	main_game_logic()
+}
+
+// run at each interrupt request
+// ``an irq temporarily stops a program, running an interupt handler instead''
+// thanks wikipedia
+// do I know when these are called on the nes? absolutely not
+// at reset? maybe?
+void irq() {
+	
+}
+
+// pretty self-explanatory
+inline void main_game_logic() {
+	// use a return dispatch here
+	// to use different logic for each screen/gamestate
+	return [gamestate] {
+		STATETITLE	@ title_logic
+		STATEPLAYING	@ ingame_logic
+		STATEGAMEOVER	@ gameover_logic
+	}
+}
+
+// uwu owo uwu owo uwu owo
+inline void init_graphics() {
+	init_sprites()
+	load_palletes()
+}
+
+// loads palletes onto the ppu
+macro void load_palletes() {
+	byte i
+	read_ppu_status() // read PPU status to reset the high/low latch
+	ppu_set_addr( ppu_pallete_ram )
+
+	for i,0,until,$20 {
+		ppu_write_data( pallete[i] )
+	}
+}
+
+// cleans up oam (object attribute memory)
+// each sprite gets 4 bytes in oam:
+// 1: ypos, 2: tile index, 3: attr table, 4: xpos
+void init_sprites() {
+	byte i
+	for i,0,to,255 {
+		if (i & %00000011) == 0 {
+			//each sprite takes up 4 bytes, and we want to edit
+			//the y position of each sprite (0th byte)
+			//so we use the %00000011 mask to write every 4th byte
+			//(every 0th sprite byte)
+			oam_buffer[i] = $ef // move the sprite off screen
+		}
+		else {
+			oam_buffer[i] = 0
+		}
+	}
+}
+
+
+// ============================================================================
+// TITLE-SCREEN
+// ============================================================================
+void title_init() {
+	byte i
+	//for now, turn off the screen and nmi
+	ppu_ctrl = 0
+	ppu_mask = 0
+	
+	//initialize the sprites and palletes
+	init_graphics()
+	
+	//write a full screen of background data
+	
+	load_sky_background()
+	
+	//write the title screen message
+	read_ppu_status() // read PPU status to reset the high/low latch
+	ppu_set_addr(ppu_nametable_ram+$018B) // point the PPU to the message's start
+	for i,0,until,$0B {
+		ppu_write_data(title_msg[i])
+	}
+	
+	//write the border
+	//top border
+	read_ppu_status() // read PPU status to reset the high/low latch
+	ppu_set_addr(ppu_nametable_ram+$0020)
+	for i,0,until,$20 {
+		ppu_write_data($01)
+	}
+	//bottom border
+	read_ppu_status() // read PPU status to reset the high/low latch
+	ppu_set_addr(ppu_nametable_ram+$0380)
+	for i,0,until,$20 {
+		ppu_write_data($01)
+	}
+	
+	//set ppu address increment to 32 so we can draw the left and right borders
+	//(allows us to draw to the nametable in vertical strips rather than horizontal)
+	ppu_ctrl = %00000100
+	
+	//left border
+	read_ppu_status() // read PPU status to reset the high/low latch
+	ppu_set_addr(ppu_nametable_ram)
+	for i,0,until,$20 {
+		ppu_write_data($01)
+	}
+	//right border
+	read_ppu_status() // read PPU status to reset the high/low latch
+	ppu_set_addr(ppu_nametable_ram+$1F)
+	for i,0,until,$20 {
+		ppu_write_data($01)
+	}
+	
+
+	framecounter = 0
+	ppu_set_scroll(0,0)
+	ppu_wait_vblank() //wait for next vblank before re-enabling NMI
+			  //so that we don't get messed up scroll registers
+	//re-enable the screen and nmi
+	ppu_ctrl = %10010000   // enable NMI, sprites from Pattern Table 0, background from Pattern Table 1
+	ppu_mask = %00011110   // enable sprites, enable background, no clipping on left side
+}
+
+void title_logic() {
+	read_joy1()
+	if input_start != 0 {
+		rand_seed = framecounter //seed the random number generator with the amount of frames
+			//that have passed since the title screen was shown
+		gamestate = STATEPLAYING
+		ingame_init()
+		return
+	}
+	framecounter += 1
+}
+
+
+// ============================================================================
+// IN-GAME
+// ============================================================================
+void ingame_init() {
+	//for now, turn off the screen and nmi
+	ppu_ctrl = 0
+	ppu_mask = 0
+	
+	//write a full screen of data
+	load_sky_background()
+	draw_score_text_background()
+	draw_boundaries_background()
+	load_ingame_attr_table()
+	
+	ppu_set_scroll(0,0)
+	ppu_wait_vblank() //wait for next vblank before re-enabling NMI
+			  //so that we don't get messed up scroll registers
+	//re-enable the screen and nmi
+	ppu_ctrl = %10010000   // enable NMI, sprites from Pattern Table 0, background from Pattern Table 1
+	ppu_mask = %00011110   // enable sprites, enable background, no clipping on left side
+}
+
+void ingame_logic() {
+	draw_score()
+	//update scroll last because writes to vram also
+	//overwrite the scroll register
+	ppu_set_scroll(0,0)	// tell the ppu there is no background scrolling
+	
+	ingame_input()
+	update_ingame_sprites()
+	if score1 >= 15 {
+		//Someone's reached 15 points, the game is over,
+		//so set the state to game over and reset the
+		//framecounter
+		gamestate = STATEGAMEOVER
+		
+		//move all the sprites off screen
+		//in preperation for the gameover screen
+		sam.top0.x = $ef
+		
+		gameover_init()
+	}
+}
+
+void ingame_input ( ) {
+	// Player 1 controls
+	read_joy1()
+	sam.movement = 0
+
+	// up
+	if input_dy < 0 {
+		if (sam.top0.y > TOPWALL) {
+			sam.top0.y -= 2
+		}
+	}
+	// down
+	else if input_dy > 0 {
+		if (sam.top0.y + SAM_HEIGHT) < BOTTOMWALL {
+			sam.top0.y += 2
+		}
+	}
+
+	// left
+	if input_dx < 0 {
+		sam.direction = 0
+		sam.top0.x -= 2
+	sam.movement = 1
+	}
+	// right
+	else if input_dx > 0 {
+		sam.direction = 1
+		sam.top0.x += 2
+	sam.movement = 1
+	}
+}
+
+void update_ingame_sprites ( )
+{
+	// player. sam is the player.
+	update_entity( pointer.Entity( sam.addr ),
+		       sam.top0.x, sam.top0.y, SAM_IDLE, SAM_WALK)
+}
+
+macro void load_ingame_attr_table() {
+	byte i
+	read_ppu_status() // read PPU status to reset the high/low latch
+	ppu_set_addr(ppu_nametable_0_attr_ram) // point the PPU to nametable 0's attribute table
+	for i,0,until,$10 {
+		ppu_write_data(attribute[i])
+	}
+}
+
+
+// ============================================================================
+// GAME-OVER
+// ============================================================================
+void gameover_init() {
+	//for now, turn off nmi and sprites
+	ppu_ctrl = 0
+	ppu_mask = 0
+	
+	draw_score() //draw the final score
+	draw_gameover() //draw the game over message
+	
+	framecounter = 0
+	ppu_set_scroll(0,0)	// tell the ppu there is no background scrolling
+	ppu_wait_vblank() //wait for next vblank before re-enabling NMI
+			  //so that we don't get messed up scroll registers
+	//re-enable the screen and nmi
+	ppu_ctrl = %10010000   // enable NMI, sprites from Pattern Table 0, background from Pattern Table 1
+	ppu_mask = %00011110   // enable sprites, enable background, no clipping on left side
+}
+
+void gameover_logic() {
+	if framecounter >= 240{
+		//3 seconds have passed,
+		//reset the game
+		simulate_reset()
+	}
+	framecounter += 1
+}
+
+void draw_gameover() {
+	byte i
+	
+	//draw the static game over message
+	read_ppu_status() // read PPU status to reset the high/low latch
+	ppu_set_addr(ppu_nametable_ram+$0107) // point the PPU to the message's start
+	for i,0,until,$12 {
+		ppu_write_data(gameover_msg[i])
+	}
+	//draw the win message
+	read_ppu_status() // read PPU status to reset the high/low latch
+	ppu_set_addr(ppu_nametable_ram+$01AC) // point the PPU to the message's start
+}
+
+
+// ============================================================================
+// MISC GRAPHICS
+// ============================================================================
+// -------------------------------------
+// BACKGROUND
+// -------------------------------------
+inline void load_sky_background() {
+	word xx
+	read_ppu_status() // read PPU status to reset the high/low latch
+	ppu_set_addr(ppu_nametable_ram) // point the PPU to palette ram
+	for xx,0,until,$0060 {
+		ppu_write_data($92) // $00 = sky
+	}
+	for xx,0,until,$0300 {
+		ppu_write_data($00) // $00 = sky
+	}
+}
+
+macro void draw_score_text_background() {
+	byte i
+	read_ppu_status() // read PPU status to reset the high/low latch
+	ppu_set_addr(ppu_nametable_ram+$20) // point the PPU to score text's start
+	for i,0,until,$1C {
+		ppu_write_data(scorebackground[i])
+	}
+}
+
+macro void draw_boundaries_background() {
+	byte i
+	
+	//draw top boundary
+	read_ppu_status() // read PPU status to reset the high/low latch
+	ppu_set_addr(ppu_nametable_ram+$40) // point the PPU to the top boundary's start
+	for i,0,until,$20 {
+		ppu_write_data($81) //write the top boundary tile
+	}
+	
+	//draw bottom boundary
+	read_ppu_status() // read PPU status to reset the high/low latch
+	ppu_set_addr(ppu_nametable_ram+$02C0) // point the PPU to the top boundary's start
+	for i,0,until,$20 {
+		ppu_write_data($80) //write the bottom boundary tile
+	}
+}
+
+// -------------------------------------
+// SPRITES
+// -------------------------------------
+// sets the current frame of ent's animation and determines which animation to use
+void update_entity ( pointer.Entity ent, byte xx, byte yy, pointer idle, pointer walk ) {
+	if ( ent[0].direction == 0 ) {
+		ent[0].top0.attrs = SAM_ATTR_HFLIP
+		ent[0].bottom0.attrs = SAM_ATTR_HFLIP
+		ent[0].top1.attrs = SAM_ATTR_HFLIP
+		ent[0].bottom1.attrs = SAM_ATTR_HFLIP
+
+		ent[0].top1.x = xx - 8
+		ent[0].bottom1.x = xx - 8
+	}
+	else {
+		ent[0].top0.attrs = SAM_ATTR
+		ent[0].bottom0.attrs = SAM_ATTR
+		ent[0].top1.attrs = SAM_ATTR
+		ent[0].bottom1.attrs = SAM_ATTR
+
+		ent[0].top1.x = xx + 8
+		ent[0].bottom1.x = xx + 8
+	}
+
+	ent[0].top0.x = xx
+	ent[0].bottom0.x = xx
+
+	ent[0].top0.y = yy
+	ent[0].bottom0.y = yy + 8
+	ent[0].top1.y = yy
+	ent[0].bottom1.y = yy + 8
+ 
+	byte ani
+	ani = 0
+	if ( ent[0].frame < 4 ) {
+		ani = 0
+	} else if ( ent[0].frame < 8 ) {
+		ani = 4
+	} else if (ent[0].frame < 12 ) {
+		ani = 8
+	} else if (ent[0].frame < 16 ) {
+		ani = 12
+	} else if (ent[0].frame < 20 ) {
+		ani = 16
+	} else {
+		ent[0].frame = 0
+		ani = 0
+	}
+
+	if ( ent[0].movement == 1 ) {
+		ent[0].top0.tile    = walk[ani + 0]
+		ent[0].bottom0.tile = walk[ani + 1]
+		ent[0].top1.tile    = walk[ani + 2]
+		ent[0].bottom1.tile = walk[ani + 3]
+	} else {
+		ent[0].top0.tile    = idle[ani + 0]
+		ent[0].bottom0.tile = idle[ani + 1]
+		ent[0].top1.tile    = idle[ani + 2]
+		ent[0].bottom1.tile = idle[ani + 3]
+	}
+
+	ent[0].frame += 1
+}
+
+// -------------------------------------
+// ETC
+// -------------------------------------
+inline void draw_score() {
+	byte digit01
+	byte digit10
+	read_ppu_status() // read PPU status to reset the high/low latch
+	
+	//display player1's score
+	digit01 = score1 %% 10 //get the ones digit
+	digit10 = score1 / 10  //get the tens digit
+	digit10 %%= 10
+	
+	ppu_set_addr(ppu_nametable_ram+$29) // point the PPU to player1's score number
+	if digit10 > 0 {
+		ppu_write_data(digit10 + '0')
+	}
+	ppu_write_data(digit01 + '0')
+}
+
+
+// ============================================================================
+// UTIL
+// ============================================================================
+
+inline asm void ppu_wait_vblank() {
+	vblankwait:
+		BIT $2002
+		! BPL vblankwait
+	? RTS
+}
