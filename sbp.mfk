@@ -2,7 +2,6 @@
 // SUPERPANSKATOL'
 // Based on Garydos'es Pong example
 
-import random
 import nes_joy
 
 segment(chrrom) const array graphics @ $0000 = file("tileset.chr")
@@ -25,9 +24,13 @@ struct Entity {
 	Sprite top1,    // right side, please kill me
 	Sprite bottom1,
 
+	// all this can be crammed into a byte (if merge dircount w frame) `o`
+	// note to self: do that
 	byte movement,  // 0-3; idle, walk, jump/fall
-	byte direction,
-	byte frame      // internal count used for animation
+	byte jump,      // 0/1
+	byte direction, // 0/1
+	byte dircount,  // counter for time-limited movement; i.e., jumping
+	byte frame      // internal count used for animation; max 5
 }
 
 // ============================================================================
@@ -86,7 +89,8 @@ const byte LEFTWALL	= $04
 // -------------------------------------
 // i don't actually remember if the super crate box guy is named sam or not
 // or if he even has a name?
-const byte SAM_HEIGHT	= $20  // height of each paddle in pixels
+const byte SAM_WALKSPEED	= 2
+const byte SAM_FALLSPEED	= 4
 const byte SAM_ATTR		= %00000001
 const byte SAM_ATTR_HFLIP 	= %01000001
 const byte SAM_ATTR_VFLIP	= %10000001
@@ -118,6 +122,7 @@ const array SAM_WALK = [ $64, $74, $65, $75,
 // quite important uwu
 
 void main() {
+	sam.dircount = 0
 	gamestate = STATETITLE
 	title_init()
 	while(true){} // all work is done in nmi
@@ -257,8 +262,6 @@ void title_init() {
 void title_logic() {
 	read_joy1()
 	if input_start != 0 {
-		rand_seed = framecounter //seed the random number generator with the amount of frames
-			//that have passed since the title screen was shown
 		gamestate = STATEPLAYING
 		ingame_init()
 		return
@@ -287,6 +290,9 @@ void ingame_init() {
 	//re-enable the screen and nmi
 	ppu_ctrl = %10010000   // enable NMI, sprites from Pattern Table 0, background from Pattern Table 1
 	ppu_mask = %00011110   // enable sprites, enable background, no clipping on left side
+
+	sam.top0.y = 40
+	sam.top0.x = 50
 }
 
 void ingame_logic() {
@@ -316,38 +322,28 @@ void ingame_input ( ) {
 	read_joy1()
 	sam.movement = 0
 
-	// up
-	if input_dy < 0 {
-		if (sam.top0.y > TOPWALL) {
-			sam.top0.y -= 2
-		}
-	}
-	// down
-	else if input_dy > 0 {
-		if (sam.top0.y + SAM_HEIGHT) < BOTTOMWALL {
-			sam.top0.y += 2
-		}
-	}
-
 	// left
-	if input_dx < 0 {
+	if ( input_dx < 0 ) {
 		sam.direction = 0
-		sam.top0.x -= 2
-	sam.movement = 1
+		sam.movement = 1
 	}
 	// right
-	else if input_dx > 0 {
+	else if ( input_dx > 0 ) {
 		sam.direction = 1
-		sam.top0.x += 2
-	sam.movement = 1
+		sam.movement = 1
+	}
+
+	// a button
+	if ( input_btn == 1 && sam.jump == 0 ) {
+			sam.jump = 1
+			sam.dircount = 0
 	}
 }
 
 void update_ingame_sprites ( )
 {
 	// player. sam is the player.
-	update_entity( pointer.Entity( sam.addr ),
-		       sam.top0.x, sam.top0.y, SAM_IDLE, SAM_WALK)
+	update_entity( pointer.Entity( sam.addr ), SAM_IDLE, SAM_WALK )
 }
 
 macro void load_ingame_attr_table() {
@@ -452,8 +448,13 @@ macro void draw_boundaries_background() {
 // -------------------------------------
 // SPRITES
 // -------------------------------------
+void update_entity ( pointer.Entity ent, pointer idle, pointer walk ) {
+	entity_physics( ent )
+	entity_sprite( ent, ent[0].top0.x, ent[0].top0.y, idle, walk )
+}
+	
 // sets the current frame of ent's animation and determines which animation to use
-void update_entity ( pointer.Entity ent, byte xx, byte yy, pointer idle, pointer walk ) {
+void entity_sprite ( pointer.Entity ent, byte xx, byte yy, pointer idle, pointer walk ) {
 	if ( ent[0].direction == 0 ) {
 		ent[0].top0.attrs = SAM_ATTR_HFLIP
 		ent[0].bottom0.attrs = SAM_ATTR_HFLIP
@@ -498,7 +499,12 @@ void update_entity ( pointer.Entity ent, byte xx, byte yy, pointer idle, pointer
 		ani = 0
 	}
 
-	if ( ent[0].movement == 1 ) {
+	if ( ent[0].jump == 1 ) {
+		ent[0].top0.tile    = idle[0]
+		ent[0].bottom0.tile = idle[1]
+		ent[0].top1.tile    = idle[2]
+		ent[0].bottom1.tile = idle[3]
+	} else if ( ent[0].movement == 1 ) {
 		ent[0].top0.tile    = walk[ani + 0]
 		ent[0].bottom0.tile = walk[ani + 1]
 		ent[0].top1.tile    = walk[ani + 2]
@@ -511,6 +517,54 @@ void update_entity ( pointer.Entity ent, byte xx, byte yy, pointer idle, pointer
 	}
 
 	ent[0].frame += 1
+}
+
+// -------------------------------------
+// "PHYSICS"
+// -------------------------------------
+void entity_physics ( pointer.Entity ent ) {
+	if ( ent[0].bottom0.y < BOTTOMWALL - 10 && ent[0].jump == 1 && ent[0].dircount == 0 ) {
+		// if not on ground, don't start jumping
+		ent[0].jump = 0
+	} else if ( ent[0].jump == 1 )
+	{
+		// a meager attempt at replicating scb's jump arc
+		// a few deficiencies: 
+		// 	* a bit too short
+		// 	* "float" is a bit too short
+		// it might work out gameplay-wise, though, so idk we'll see
+		if ( ent[0].dircount < 3) {
+			ent[0].top0.y -= 6
+		} else if ( ent[0].dircount == 3 ) {
+			ent[0].top0.y -= 2
+		} else if ( ent[0].dircount == 4 ) {
+			ent[0].top0.y -= 6
+		} else if ( ent[0].dircount < 9 ) {
+			ent[0].top0.y -= 3
+		} else if ( 9 <= ent[0].dircount <= 10 ) {
+			ent[0].top0.y -= 1
+		} else if ( ent[0].dircount == 13 ) {
+			ent[0].top0.y += 2
+		} else if ( 13 < ent[0].dircount < 20 ) {
+			ent[0].top0.y += 2
+		} else if ( 20 < ent[0].dircount ) {
+			ent[0].dircount = -1
+			ent[0].jump = 0
+		}
+		ent[0].dircount += 1
+	}
+
+	if ( ent[0].bottom0.y < BOTTOMWALL - 10 && ent[0].jump == 0 ) {
+		ent[0].top0.y += SAM_FALLSPEED
+	}
+
+	if ( ent[0].movement == 1 ) {
+		if ( ent[0].direction == 0 ) {
+			ent[0].top0.x -= SAM_WALKSPEED
+		} else if ( ent[0].direction == 1) {
+			ent[0].top0.x += SAM_WALKSPEED
+		}
+	}
 }
 
 // -------------------------------------
@@ -537,7 +591,6 @@ inline void draw_score() {
 // ============================================================================
 // UTIL
 // ============================================================================
-
 inline asm void ppu_wait_vblank() {
 	vblankwait:
 		BIT $2002
