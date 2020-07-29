@@ -1,4 +1,4 @@
-// SUPER BREAD PAN
+/// SUPER BREAD PAN
 // SUPERPANSKATOL'
 // Based on Garydos'es Pong example
 
@@ -30,7 +30,8 @@ struct Entity {
 	byte jump,      // 0/1
 	byte direction, // 0/1
 	byte dircount,  // counter for time-limited movement; i.e., jumping
-	byte frame      // internal count used for animation; max 5
+	byte frame,      // internal count used for animation; max 5
+	byte walkspeed
 }
 
 // ============================================================================
@@ -41,6 +42,7 @@ byte score1
 array oam_buffer [256] @$200 // sprite buffer
 word framecounter
 Entity sam @$204  // player character
+Entity baby @$250 // baby character
 volatile Gamestate gamestate // the current Gamestate
 
 // ============================================================================
@@ -48,7 +50,10 @@ volatile Gamestate gamestate // the current Gamestate
 // ============================================================================
 const array pallete = [
   $22,$29,$1A,$0F,  $22,$36,$17,$0F,  $22,$30,$21,$0F,  $22,$27,$17,$0F, 
-  $22,$1C,$15,$14, $0F,$18,$28,$0F,  $22,$1C,$15,$14,  $22,$02,$38,$3C
+  $22,$1C,$15,$14,
+  $0F,$18,$28,$0F,   // sam
+  $0F,$28,$29,$0F,  // enemies
+  $03,$07,$05,$03  // angry owo
 ]
 
 const array attribute = [
@@ -85,16 +90,31 @@ const byte BOTTOMWALL	= $B0
 const byte LEFTWALL	= $04
 
 // -------------------------------------
-// SAM
+// ATTRIBUTES
 // -------------------------------------
 // i don't actually remember if the super crate box guy is named sam or not
 // or if he even has a name?
-const byte SAM_WALKSPEED	= 2
-const byte SAM_FALLSPEED	= 4
 const byte SAM_ATTR		= %00000001
 const byte SAM_ATTR_HFLIP 	= %01000001
 const byte SAM_ATTR_VFLIP	= %10000001
 const byte SAM_ATTR_HVFLIP	= %11000001 
+
+const byte BAD_ATTR		= %00000010
+const byte BAD_ATTR_HFLIP 	= %01000010
+const byte BAD_ATTR_VFLIP	= %10000010
+const byte BAD_ATTR_HVFLIP	= %11000010 
+
+const byte MAD_ATTR		= %00000011
+const byte MAD_ATTR_HFLIP 	= %01000011
+const byte MAD_ATTR_VFLIP	= %10000011
+const byte MAD_ATTR_HVFLIP	= %11000011 
+
+// -------------------------------------
+// PHYSICS?
+// -------------------------------------
+const byte SAM_WALKSPEED	= 2
+const byte BABY_WALKSPEED	= SAM_WALKSPEED / 2
+const byte FALLSPEED		= 4
 
 // -------------------------------------
 // ANIMATIONS
@@ -103,18 +123,23 @@ const byte SAM_ATTR_HVFLIP	= %11000001
 // 5 frames. An animation array just contains 20 locations in CHR, four per
 // frame, in this totally logical order:
 //     top-left, bottom-left, top-right, bottom-right
-const array SAM_IDLE = [ $44, $54, $45, $55,
-			 $46, $56, $47, $57,
-			 $48, $58, $49, $59,
-			 $4A, $5A, $4B, $5B,
-			 $4C, $5C, $4D, $5D ]
+const array SAM_IDLE = [ $01, $11, $02, $12,
+			 $03, $13, $04, $14,
+			 $05, $15, $06, $16,
+			 $07, $17, $08, $18,
+			 $09, $19, $0A, $1A ]
 
-const array SAM_WALK = [ $64, $74, $65, $75,
-			 $66, $76, $67, $77,
-			 $68, $78, $69, $79,
-			 $6A, $7A, $6B, $7B,
-			 $6C, $7C, $6D, $7D ]
-
+const array SAM_WALK = [ $21, $31, $22, $32,
+			 $23, $33, $24, $34,
+			 $25, $35, $26, $36,
+			 $27, $37, $28, $38,
+			 $29, $39, $2A, $3A ]
+			 
+const array BABY_WALK = [ $00, $C0, $00, $00,
+			  $00, $C1, $00, $C2,
+			  $00, $C3, $00, $00,
+			  $00, $C4, $00, $00,
+			  $00, $C5, $00, $00 ]
 
 // ============================================================================
 // CORE
@@ -293,6 +318,10 @@ void ingame_init() {
 
 	sam.top0.y = 40
 	sam.top0.x = 50
+	sam.walkspeed = SAM_WALKSPEED
+	baby.top0.y = 40
+	baby.top0.x = 100
+	baby.walkspeed = BABY_WALKSPEED
 }
 
 void ingame_logic() {
@@ -344,6 +373,7 @@ void update_ingame_sprites ( )
 {
 	// player. sam is the player.
 	update_entity( pointer.Entity( sam.addr ), SAM_IDLE, SAM_WALK )
+	update_entity( pointer.Entity( baby.addr ), BABY_WALK, BABY_WALK )
 }
 
 macro void load_ingame_attr_table() {
@@ -450,26 +480,41 @@ macro void draw_boundaries_background() {
 // -------------------------------------
 void update_entity ( pointer.Entity ent, pointer idle, pointer walk ) {
 	entity_physics( ent )
+	if ( ent[0].bottom0.tile > $39 ) {
+		entity_destiny ( ent )
+	}
 	entity_sprite( ent, ent[0].top0.x, ent[0].top0.y, idle, walk )
 }
 	
 // sets the current frame of ent's animation and determines which animation to use
 void entity_sprite ( pointer.Entity ent, byte xx, byte yy, pointer idle, pointer walk ) {
 	if ( ent[0].direction == 0 ) {
-		ent[0].top0.attrs = SAM_ATTR_HFLIP
-		ent[0].bottom0.attrs = SAM_ATTR_HFLIP
-		ent[0].top1.attrs = SAM_ATTR_HFLIP
-		ent[0].bottom1.attrs = SAM_ATTR_HFLIP
-
+		if ( ent[0].bottom0.tile < $3A ) {   // if player
+			ent[0].top0.attrs    = SAM_ATTR_HFLIP
+			ent[0].bottom0.attrs = SAM_ATTR_HFLIP
+			ent[0].top1.attrs    = SAM_ATTR_HFLIP
+			ent[0].bottom1.attrs = SAM_ATTR_HFLIP
+		} else {
+			ent[0].top0.attrs    = BAD_ATTR_HFLIP
+			ent[0].bottom0.attrs = BAD_ATTR_HFLIP
+			ent[0].top1.attrs    = BAD_ATTR_HFLIP
+			ent[0].bottom1.attrs = BAD_ATTR_HFLIP
+		}
 		ent[0].top1.x = xx - 8
 		ent[0].bottom1.x = xx - 8
 	}
 	else {
-		ent[0].top0.attrs = SAM_ATTR
-		ent[0].bottom0.attrs = SAM_ATTR
-		ent[0].top1.attrs = SAM_ATTR
-		ent[0].bottom1.attrs = SAM_ATTR
-
+		if ( ent[0].bottom0.tile < $3A ) {   // if player
+			ent[0].top0.attrs    = SAM_ATTR
+			ent[0].bottom0.attrs = SAM_ATTR
+			ent[0].top1.attrs    = SAM_ATTR
+			ent[0].bottom1.attrs = SAM_ATTR
+		} else {
+			ent[0].top0.attrs    = BAD_ATTR
+			ent[0].bottom0.attrs = BAD_ATTR
+			ent[0].top1.attrs    = BAD_ATTR
+			ent[0].bottom1.attrs = BAD_ATTR
+		}
 		ent[0].top1.x = xx + 8
 		ent[0].bottom1.x = xx + 8
 	}
@@ -523,6 +568,25 @@ void entity_sprite ( pointer.Entity ent, byte xx, byte yy, pointer idle, pointer
 // "PHYSICS"
 // -------------------------------------
 void entity_physics ( pointer.Entity ent ) {
+	// if player
+	if ( ent[0].bottom0.tile < $3A ) {
+		entity_jump_physics( ent )
+	}
+
+	if ( ent[0].bottom0.y < BOTTOMWALL - 10 && ent[0].jump == 0 ) {
+		ent[0].top0.y += FALLSPEED
+	}
+
+	if ( ent[0].movement == 1 ) {
+		if ( ent[0].direction == 0 ) {
+			ent[0].top0.x -= ent[0].walkspeed
+		} else if ( ent[0].direction == 1) {
+			ent[0].top0.x += ent[0].walkspeed
+		}
+	}
+}
+
+void entity_jump_physics ( pointer.Entity ent ) {
 	if ( ent[0].bottom0.y < BOTTOMWALL - 10 && ent[0].jump == 1 && ent[0].dircount == 0 ) {
 		// if not on ground, don't start jumping
 		ent[0].jump = 0
@@ -553,18 +617,12 @@ void entity_physics ( pointer.Entity ent ) {
 		}
 		ent[0].dircount += 1
 	}
+}
 
-	if ( ent[0].bottom0.y < BOTTOMWALL - 10 && ent[0].jump == 0 ) {
-		ent[0].top0.y += SAM_FALLSPEED
-	}
-
-	if ( ent[0].movement == 1 ) {
-		if ( ent[0].direction == 0 ) {
-			ent[0].top0.x -= SAM_WALKSPEED
-		} else if ( ent[0].direction == 1) {
-			ent[0].top0.x += SAM_WALKSPEED
-		}
-	}
+// enemy pathfinding, blah blah.
+// determines an npc's destiny
+void entity_destiny ( pointer.Entity ent ) {
+	ent[0].movement = 1
 }
 
 // -------------------------------------
