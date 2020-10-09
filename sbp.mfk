@@ -49,15 +49,22 @@ volatile Gamestate gamestate // the current Gamestate
 // CONSTANTS
 // ============================================================================
 const array pallete = [
-  $22,$29,$1A,$0F,  $22,$36,$17,$0F,  $22,$30,$21,$0F,  $22,$27,$17,$0F, 
+  $22,$29,$1A,$0F,
+  // construction-blocks
+  $00,$06,$07,$16,
+  // construction-bricks
+  $16,$06,$07,$00,
+  $22,$27,$17,$0F, 
   $22,$1C,$15,$14,
   $0F,$18,$28,$0F,   // sam
   $0F,$28,$29,$0F,  // enemies
   $03,$07,$05,$03  // angry owo
 ]
 
+// palette selections for the 16x16 ppu tiles
+// %DownRight DownLeft TopRight TopLeft
 const array attribute = [
-  %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101,
+  %01010101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101,
   %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101,
   %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101
 ]
@@ -164,8 +171,6 @@ void nmi() {
 }
 
 // run at each interrupt request
-// ``an irq temporarily stops a program, running an interupt handler instead''
-// thanks wikipedia
 // do I know when these are called on the nes? absolutely not
 // at reset? maybe?
 void irq() {
@@ -380,8 +385,8 @@ macro void load_ingame_attr_table() {
 	byte i
 	read_ppu_status() // read PPU status to reset the high/low latch
 	ppu_set_addr(ppu_nametable_0_attr_ram) // point the PPU to nametable 0's attribute table
-	for i,0,until,$10 {
-		ppu_write_data(attribute[i])
+	for i,0,until,$37 {
+		ppu_write_data(attribute[0])
 	}
 }
 
@@ -440,9 +445,6 @@ inline void load_sky_background() {
 	word xx
 	read_ppu_status() // read PPU status to reset the high/low latch
 	ppu_set_addr(ppu_nametable_ram) // point the PPU to palette ram
-	for xx,0,until,$0060 {
-		ppu_write_data($92) // $00 = sky
-	}
 	for xx,0,until,$0300 {
 		ppu_write_data($00) // $00 = sky
 	}
@@ -459,19 +461,18 @@ macro void draw_score_text_background() {
 
 macro void draw_boundaries_background() {
 	byte i
-	
 	//draw top boundary
 	read_ppu_status() // read PPU status to reset the high/low latch
 	ppu_set_addr(ppu_nametable_ram+$40) // point the PPU to the top boundary's start
 	for i,0,until,$20 {
-		ppu_write_data($81) //write the top boundary tile
+		ppu_write_data($80) //write the top boundary tile
 	}
 	
 	//draw bottom boundary
 	read_ppu_status() // read PPU status to reset the high/low latch
 	ppu_set_addr(ppu_nametable_ram+$02C0) // point the PPU to the top boundary's start
-	for i,0,until,$20 {
-		ppu_write_data($80) //write the bottom boundary tile
+	for i,0,until,$80 {
+		ppu_write_data($83) //write the bottom boundary tile
 	}
 }
 
