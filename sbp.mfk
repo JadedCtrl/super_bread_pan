@@ -34,6 +34,7 @@ struct Entity {
 	byte walkspeed
 }
 
+
 // ============================================================================
 // VARIABLES
 // ============================================================================
@@ -311,7 +312,8 @@ void ingame_init() {
 	//write a full screen of data
 	load_sky_background()
 	draw_score_text_background()
-	draw_boundaries_background()
+	init_map()
+
 	load_ingame_attr_table()
 	
 	ppu_set_scroll(0,0)
@@ -450,6 +452,52 @@ inline void load_sky_background() {
 	}
 }
 
+
+const array(byte) bg_pallete = [ $2C,
+				$29,$1A,$0F,   $00,
+				// construction-blocks
+				$06,$07,$16,   $16,
+				// construction-bricks
+				$06,$07,$00,   $22,
+				$27,$17,$0F ]
+
+const array(word) locations = [ $280 ]
+const array(byte) location_tiles = [ $80 ]
+
+const array(word) ranges = [ $2C0,$380 ]
+const array(byte) range_tiles = [ $83 ]
+
+void init_map () {
+	byte i
+	word j
+	word last_range
+	last_range = 0
+	read_ppu_status() // read PPU status to reset the high/low latch
+
+	ppu_set_addr( ppu_pallete_ram )
+	for i,0,until,$F {
+		ppu_write_data( bg_pallete[i] )
+	}
+
+	read_ppu_status() // read PPU status to reset the high/low latch
+	for i,0,until,$1 {
+		ppu_set_addr(ppu_nametable_ram + locations[i]) // point the PPU to the top boundary's start
+		ppu_write_data(location_tiles[i]) //write the top boundary tile
+	}
+
+	for i,0,until,$2 {
+		if last_range != $0 {
+			ppu_set_addr(ppu_nametable_ram + ranges[i-1]) // point the PPU to the top boundary's start
+			for j,ranges[i-1],until,ranges[1] {
+				ppu_write_data(range_tiles[0]) //write the top boundary tile
+			}
+			last_range = 0
+		} else {
+			last_range = 1
+		}
+	}
+}
+
 macro void draw_score_text_background() {
 	byte i
 	read_ppu_status() // read PPU status to reset the high/low latch
@@ -459,22 +507,6 @@ macro void draw_score_text_background() {
 	}
 }
 
-macro void draw_boundaries_background() {
-	byte i
-	//draw top boundary
-	read_ppu_status() // read PPU status to reset the high/low latch
-	ppu_set_addr(ppu_nametable_ram+$40) // point the PPU to the top boundary's start
-	for i,0,until,$20 {
-		ppu_write_data($80) //write the top boundary tile
-	}
-	
-	//draw bottom boundary
-	read_ppu_status() // read PPU status to reset the high/low latch
-	ppu_set_addr(ppu_nametable_ram+$02C0) // point the PPU to the top boundary's start
-	for i,0,until,$80 {
-		ppu_write_data($83) //write the bottom boundary tile
-	}
-}
 
 // -------------------------------------
 // SPRITES
