@@ -18,21 +18,6 @@ struct Sprite {
 }
 
 // abstraction for 16x16 animated monstrosities
-struct Entity {
-	Sprite top0,    // left side, for the record
-	Sprite bottom0,
-	Sprite top1,    // right side, please kill me
-	Sprite bottom1,
-
-	// all this can be crammed into a byte (if merge dircount w frame) `o`
-	// note to self: do that
-	byte movement,  // 0-3; idle, walk, jump/fall
-	byte jump,      // 0/1
-	byte direction, // 0/1
-	byte dircount,  // counter for time-limited movement; i.e., jumping
-	byte frame,      // internal count used for animation; max 5
-	byte walkspeed
-}
 
 
 // ============================================================================
@@ -49,26 +34,13 @@ volatile Gamestate gamestate // the current Gamestate
 // ============================================================================
 // CONSTANTS
 // ============================================================================
-const array pallete = [
-  $22,$29,$1A,$0F,
-  // construction-blocks
-  $00,$06,$07,$16,
-  // construction-bricks
-  $16,$06,$07,$00,
-  $22,$27,$17,$0F, 
+const array fg_pallete = [
   $22,$1C,$15,$14,
   $0F,$18,$28,$0F,   // sam
   $0F,$28,$29,$0F,  // enemies
   $03,$07,$05,$03  // angry owo
 ]
 
-// palette selections for the 16x16 ppu tiles
-// %DownRight DownLeft TopRight TopLeft
-const array attribute = [
-  %01010101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101,
-  %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101,
-  %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101
-]
 
 enum Gamestate {
 	STATETITLE, 
@@ -149,11 +121,11 @@ const array BABY_WALK = [ $00, $C0, $00, $00,
 			  $00, $C4, $00, $00,
 			  $00, $C5, $00, $00 ]
 
+
 // ============================================================================
 // CORE
 // ============================================================================
 // quite important uwu
-
 void main() {
 	sam.dircount = 0
 	gamestate = STATETITLE
@@ -192,18 +164,7 @@ inline void main_game_logic() {
 // uwu owo uwu owo uwu owo
 inline void init_graphics() {
 	init_sprites()
-	load_palletes()
-}
-
-// loads palletes onto the ppu
-macro void load_palletes() {
-	byte i
-	read_ppu_status() // read PPU status to reset the high/low latch
-	ppu_set_addr( ppu_pallete_ram )
-
-	for i,0,until,$20 {
-		ppu_write_data( pallete[i] )
-	}
+	load_fg_pallete( fg_pallete )
 }
 
 // cleans up oam (object attribute memory)
@@ -239,8 +200,6 @@ void title_init() {
 	init_graphics()
 	
 	//write a full screen of background data
-	
-	load_sky_background()
 	
 	//write the title screen message
 	read_ppu_status() // read PPU status to reset the high/low latch
@@ -310,12 +269,9 @@ void ingame_init() {
 	ppu_mask = 0
 	
 	//write a full screen of data
-	load_sky_background()
-	draw_score_text_background()
-	init_map()
+	init_map1_c()
+//	draw_score_text_background()
 
-	load_ingame_attr_table()
-	
 	ppu_set_scroll(0,0)
 	ppu_wait_vblank() //wait for next vblank before re-enabling NMI
 			  //so that we don't get messed up scroll registers
@@ -332,7 +288,7 @@ void ingame_init() {
 }
 
 void ingame_logic() {
-	draw_score()
+//	draw_score()
 	//update scroll last because writes to vram also
 	//overwrite the scroll register
 	ppu_set_scroll(0,0)	// tell the ppu there is no background scrolling
@@ -383,15 +339,6 @@ void update_ingame_sprites ( )
 	update_entity( pointer.Entity( baby.addr ), BABY_WALK, BABY_WALK )
 }
 
-macro void load_ingame_attr_table() {
-	byte i
-	read_ppu_status() // read PPU status to reset the high/low latch
-	ppu_set_addr(ppu_nametable_0_attr_ram) // point the PPU to nametable 0's attribute table
-	for i,0,until,$37 {
-		ppu_write_data(attribute[0])
-	}
-}
-
 
 // ============================================================================
 // GAME-OVER
@@ -437,66 +384,59 @@ void draw_gameover() {
 }
 
 
+
 // ============================================================================
 // MISC GRAPHICS
 // ============================================================================
 // -------------------------------------
 // BACKGROUND
 // -------------------------------------
-inline void load_sky_background() {
+inline void blank_bg() {
 	word xx
 	read_ppu_status() // read PPU status to reset the high/low latch
 	ppu_set_addr(ppu_nametable_ram) // point the PPU to palette ram
 	for xx,0,until,$0300 {
-		ppu_write_data($00) // $00 = sky
+		ppu_write_data($00) 
 	}
 }
 
-
-const array(byte) bg_pallete = [ $2C,
-				$29,$1A,$0F,   $00,
-				// construction-blocks
-				$06,$07,$16,   $16,
-				// construction-bricks
-				$06,$07,$00,   $22,
-				$27,$17,$0F ]
-
-const array(word) locations = [ $280 ]
-const array(byte) location_tiles = [ $80 ]
-
-const array(word) ranges = [ $2C0,$380 ]
-const array(byte) range_tiles = [ $83 ]
-
-void init_map () {
+// -------------------------------------
+// PALLETE MANAGEMENT
+// -------------------------------------
+// loads colours into the section of memory dedicated to background (sprite) colours.
+// useful resource: https://wiki.nesdev.com/w/index.php/PPU_palettes
+// (edits $3F00 to $3F0F)
+void load_bg_pallete ( pointer pallete ) {
 	byte i
-	word j
-	word last_range
-	last_range = 0
-	read_ppu_status() // read PPU status to reset the high/low latch
-
 	ppu_set_addr( ppu_pallete_ram )
 	for i,0,until,$F {
-		ppu_write_data( bg_pallete[i] )
-	}
-
-	read_ppu_status() // read PPU status to reset the high/low latch
-	for i,0,until,$1 {
-		ppu_set_addr(ppu_nametable_ram + locations[i]) // point the PPU to the top boundary's start
-		ppu_write_data(location_tiles[i]) //write the top boundary tile
-	}
-
-	for i,0,until,$2 {
-		if last_range != $0 {
-			ppu_set_addr(ppu_nametable_ram + ranges[i-1]) // point the PPU to the top boundary's start
-			for j,ranges[i-1],until,ranges[1] {
-				ppu_write_data(range_tiles[0]) //write the top boundary tile
-			}
-			last_range = 0
-		} else {
-			last_range = 1
-		}
+		ppu_write_data( pallete[i] )
 	}
 }
+
+// loads colours into the section of memory dedicated to foreground (sprite) colours.
+// unrelated, but heck do I feel like I'm spelling pallete wrong. doesn't it have 'double-t' vibes?
+// like palette? or maybe pallette? hmm.
+// (edits $3F10 to $3F1F)
+void load_fg_pallete ( pointer pallete ) {
+	byte i
+	ppu_set_addr( ppu_pallete_ram + $10 )
+	for i,0,until,$F {
+		ppu_write_data( pallete[i] )
+	}
+}
+
+// load pallete selection for bg tiles to ppu
+// useful resource: https://wiki.nesdev.com/w/index.php/PPU_palettes
+macro void load_attr_table( pointer attributes ) {
+	byte i
+	read_ppu_status() // read PPU status to reset the high/low latch
+	ppu_set_addr(ppu_nametable_0_attr_ram) // point the PPU to nametable 0's attribute table
+	for i,0,until,$37 {
+		ppu_write_data(attributes[0]) // !!!! provisional value
+	}
+}
+
 
 macro void draw_score_text_background() {
 	byte i
@@ -507,10 +447,43 @@ macro void draw_score_text_background() {
 	}
 }
 
+inline void draw_score() {
+	byte digit01
+	byte digit10
+	read_ppu_status() // read PPU status to reset the high/low latch
+	
+	//display player1's score
+	digit01 = score1 %% 10 //get the ones digit
+	digit10 = score1 / 10  //get the tens digit
+	digit10 %%= 10
+	
+	ppu_set_addr(ppu_nametable_ram+$29) // point the PPU to player1's score number
+	if digit10 > 0 {
+		ppu_write_data(digit10 + '0')
+	}
+	ppu_write_data(digit01 + '0')
+}
 
-// -------------------------------------
-// SPRITES
-// -------------------------------------
+
+// ============================================================================
+// ENTITIES
+// ============================================================================
+struct Entity {
+	Sprite top0,    // left side, for the record
+	Sprite bottom0,
+	Sprite top1,    // right side, please kill me
+	Sprite bottom1,
+
+	// all this can be crammed into a byte (if merge dircount w frame) `o`
+	// note to self: do that
+	byte movement,  // 0-3; idle, walk, jump/fall
+	byte jump,      // 0/1
+	byte direction, // 0/1
+	byte dircount,  // counter for time-limited movement; i.e., jumping
+	byte frame,      // internal count used for animation; max 5
+	byte walkspeed
+}
+
 void update_entity ( pointer.Entity ent, pointer idle, pointer walk ) {
 	entity_physics( ent )
 	if ( ent[0].bottom0.tile > $39 ) {
@@ -597,6 +570,7 @@ void entity_sprite ( pointer.Entity ent, byte xx, byte yy, pointer idle, pointer
 	ent[0].frame += 1
 }
 
+
 // -------------------------------------
 // "PHYSICS"
 // -------------------------------------
@@ -619,6 +593,9 @@ void entity_physics ( pointer.Entity ent ) {
 	}
 }
 
+// frankly, this is just terrible. reeeee !!!!
+// please replace this, please replace this, please replace this
+// oh gods almightly please please please
 void entity_jump_physics ( pointer.Entity ent ) {
 	if ( ent[0].bottom0.y < BOTTOMWALL - 10 && ent[0].jump == 1 && ent[0].dircount == 0 ) {
 		// if not on ground, don't start jumping
@@ -658,25 +635,79 @@ void entity_destiny ( pointer.Entity ent ) {
 	ent[0].movement = 1
 }
 
-// -------------------------------------
-// ETC
-// -------------------------------------
-inline void draw_score() {
-	byte digit01
-	byte digit10
+
+// ============================================================================
+// MAPS
+// ============================================================================
+// load a map onto the ppu
+void init_map (	pointer.word locations, pointer location_tiles,
+		pointer.word ranges, pointer range_tiles,
+		pointer pallete, pointer attrs ) {
+	byte i
+	word j
+	word last_range
+	last_range = 0
 	read_ppu_status() // read PPU status to reset the high/low latch
-	
-	//display player1's score
-	digit01 = score1 %% 10 //get the ones digit
-	digit10 = score1 / 10  //get the tens digit
-	digit10 %%= 10
-	
-	ppu_set_addr(ppu_nametable_ram+$29) // point the PPU to player1's score number
-	if digit10 > 0 {
-		ppu_write_data(digit10 + '0')
+
+	load_bg_pallete( pallete )
+	load_attr_table( attrs )
+
+	blank_bg()
+
+	read_ppu_status()
+	i = 0
+	while ( locations[i] != nullchar ) {
+		ppu_set_addr(ppu_nametable_ram + locations[i]) 
+		ppu_write_data(location_tiles[i])
+		i += 1
 	}
-	ppu_write_data(digit01 + '0')
+
+	i = 0
+	while ( ranges[i] != nullchar ) {
+		if last_range != 0 {
+			ppu_set_addr(ppu_nametable_ram + ranges[i-1])
+			for j,ranges[i-1],until,ranges[i] {
+				ppu_write_data(range_tiles[i/2]) // only writes first tile, oh no !!!!
+			}
+			last_range = 0
+		} else {
+			last_range = 1
+		}
+		i += 1
+	}
 }
+
+void init_map1_c () {
+	init_map( pointer.word( MAP1_C_LOCATIONS ), MAP1_C_LOCATION_TILES,
+		  pointer.word( MAP1_C_RANGES ), MAP1_C_RANGE_TILES,
+		  MAP1_C_PALLETE, MAP1_C_ATTRS )
+}
+
+// -------------------------------------
+// MAP DATA
+// -------------------------------------
+// map1: construction site
+const array(word) MAP1_C_LOCATIONS = [ $280, $20, nullchar ]
+const array(byte) MAP1_C_LOCATION_TILES = [ $80, $80 ]
+
+const array(word) MAP1_C_RANGES = [ $2C0, $380, $200, $220, nullchar ]
+const array(byte) MAP1_C_RANGE_TILES = [ $83, $81 ]
+
+const array(byte) MAP1_C_PALLETE = [ $22,
+	$29,$1A,$0F,   $00,
+	// construction-blocks
+	$06,$07,$16,   $16,
+	// construction-bricks
+	$06,$07,$00,   $22,
+	$27,$17,$0F ]
+
+// palette selections for the ppu tiles
+// also not the most efficient way to store this data. !!!!
+// %DownRight DownLeft TopRight TopLeft
+const array(byte) MAP1_C_ATTRS = [
+  %01010101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101,
+  %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101,
+  %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101 ]
 
 
 // ============================================================================
