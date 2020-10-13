@@ -409,7 +409,7 @@ inline void blank_bg() {
 void load_bg_pallete ( pointer pallete ) {
 	byte i
 	ppu_set_addr( ppu_pallete_ram )
-	for i,0,until,$F {
+	for i,0,to,$F {
 		ppu_write_data( pallete[i] )
 	}
 }
@@ -421,7 +421,7 @@ void load_bg_pallete ( pointer pallete ) {
 void load_fg_pallete ( pointer pallete ) {
 	byte i
 	ppu_set_addr( ppu_pallete_ram + $10 )
-	for i,0,until,$F {
+	for i,0,to,$F {
 		ppu_write_data( pallete[i] )
 	}
 }
@@ -432,8 +432,8 @@ macro void load_attr_table( pointer attributes ) {
 	byte i
 	read_ppu_status() // read PPU status to reset the high/low latch
 	ppu_set_addr(ppu_nametable_0_attr_ram) // point the PPU to nametable 0's attribute table
-	for i,0,until,$37 {
-		ppu_write_data(attributes[0]) // !!!! provisional value
+	for i,0,to,64 {
+		ppu_write_data(attributes[i]) 
 	}
 }
 
@@ -645,7 +645,7 @@ void init_map (	pointer.word locations, pointer location_tiles,
 		pointer pallete, pointer attrs ) {
 	byte i
 	word j
-	word last_range
+	byte last_range
 	last_range = 0
 	read_ppu_status() // read PPU status to reset the high/low latch
 
@@ -666,8 +666,8 @@ void init_map (	pointer.word locations, pointer location_tiles,
 	while ( ranges[i] != nullchar ) {
 		if last_range != 0 {
 			ppu_set_addr(ppu_nametable_ram + ranges[i-1])
-			for j,ranges[i-1],until,ranges[i] {
-				ppu_write_data(range_tiles[i/2]) // only writes first tile, oh no !!!!
+			for j,ranges[i-1],to,ranges[i] {
+				ppu_write_data(range_tiles[i/2])
 			}
 			last_range = 0
 		} else {
@@ -687,27 +687,72 @@ void init_map1_c () {
 // MAP DATA
 // -------------------------------------
 // map1: construction site
-const array(word) MAP1_C_LOCATIONS = [ $280, $20, nullchar ]
-const array(byte) MAP1_C_LOCATION_TILES = [ $80, $80 ]
+// not the most efficient way to store this data.
+// _RANGES is for horizontal lines, left to right.
+// _LOCATIONS should only be used for one-off, random blocks. right now it's used
+// for manually typing in vertical lines, gross.
+const array(word) MAP1_C_LOCATIONS = [
+	// border pillars (far left and right)
+	$22,$3D,   $42,$5D,   $62,$7D,   $82,$9D,
+	$A2,$BD,   $C2,$DD,   $E2,$FD,   $102,$11D,
+	$122,$13D, $142,$15D, $162,$17D, $182,$19D,
+	$1A2,$1BD, $1C2,$1DD, $1E2,$1FD, $202,$21D,
+	$222,$23D, $242,$25D, $262,$27D, $282,$29D,
+	$2A2,$2BD, $2C2,$2DD, $2E2,$2FD,
+	// lift up top platform
+	$A,$2A,$4A,$6A,$8A,$AA,$CA,$EA,
+	$15,$35,$55,$75,$95,$B5,$D5,$F5,
+	// lift up bottom platform
+	$26A,$28A,$2AA,$2CA,$2EA,$30A,
+	$275,$295,$2B5,$2D5,$2F5,$315,
+	nullchar ]
+const array(byte) MAP1_C_LOCATION_TILES = [
+	$81,$81,   $82,$82,   $82,$82,   $82,$82,
+	$82,$82,   $82,$82,   $82,$82,   $82,$82,
+	$82,$82,   $82,$82,   $82,$82,   $82,$82,
+	$81,$81,   $82,$82,   $82,$82,   $82,$82,
+	$82,$82,   $82,$82,   $82,$82,   $82,$82,
+	$82,$82,   $82,$82,   $81,$81,
+	$85,$85,$85,$85,$85,$85,$85,$89,
+	$86,$86,$86,$86,$86,$86,$86,$8A,
+	$87,$85,$85,$85,$85,$85,
+	$88,$86,$86,$86,$86,$86 ]
+	
+const array(word) MAP1_C_RANGES = [
+	$340,$3A0, // sandstone subterrain
+	$300,$308, $317,$31F, // brick floor (top)
+	$320,$32E, $331,$33F, // brick floor (second)
+	$23,$2E, $31,$3C, // ceiling
+	$109,$116, // top platform
+	$1A3,$1A8, $1B7,$1BC, // middle platforms
+	$249,$256, // bottom platform
+	nullchar ]
+const array(byte) MAP1_C_RANGE_TILES = [ $84, $83,$83,$83,$83, $80,$80, $80, $80,$80, $80 ]
 
-const array(word) MAP1_C_RANGES = [ $2C0, $380, $200, $220, nullchar ]
-const array(byte) MAP1_C_RANGE_TILES = [ $83, $81 ]
-
-const array(byte) MAP1_C_PALLETE = [ $22,
+const array(byte) MAP1_C_PALLETE = [ $21, // bg color
 	$29,$1A,$0F,   $00,
 	// construction-blocks
-	$06,$07,$16,   $16,
+	$06,$07,$16,   $00,
 	// construction-bricks
-	$06,$07,$00,   $22,
-	$27,$17,$0F ]
+	$06,$07,$00,   $01,
+	// sandstone
+	$2B,$2B,$1A ]
+
+const word MAP1_C_SPAWN = $2F
+const word MAP1_C_FIRE = $34E
 
 // palette selections for the ppu tiles
-// also not the most efficient way to store this data. !!!!
+// also not the most efficient way to store this data. (... clearly) !!!!
 // %DownRight DownLeft TopRight TopLeft
 const array(byte) MAP1_C_ATTRS = [
-  %01010101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101,
-  %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101,
-  %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101, %00000101 ]
+  %01010101, %10101010, %10101010, %10101010, %10101010, %10101010, %10101010, %01010101,
+  %01010101, %10101010, %10101010, %10101010, %10101010, %10101010, %10101010, %01010101,
+  %01010101, %10101010, %10101010, %10101010, %10101010, %10101010, %10101010, %01010101,
+  %01010101, %10101010, %10101010, %10101010, %10101010, %10101010, %10101010, %01010101,
+  %01010101, %10101010, %10101010, %10101010, %10101010, %10101010, %10101010, %01010101,
+  %01010101, %10101010, %10101010, %10101010, %10101010, %10101010, %10101010, %01010101,
+  %11111010, %11111010, %11111010, %11111010, %11111010, %11111010, %11111010, %11111010,
+  %11111111, %11111111, %11111111, %11111111, %11111111, %11111111, %11111111, %11111111 ]
 
 
 // ============================================================================
