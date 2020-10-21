@@ -1,6 +1,5 @@
 /// SUPER BREAD PAN
 // SUPERPANSKATOL'
-// Based on Garydos'es Pong example
 
 import nes_joy
 
@@ -17,7 +16,6 @@ struct Sprite {
 	byte x
 }
 
-// abstraction for 16x16 animated monstrosities
 
 
 // ============================================================================
@@ -468,6 +466,7 @@ inline void draw_score() {
 // ============================================================================
 // ENTITIES
 // ============================================================================
+// abstraction for 16x16 animated monstrosities
 struct Entity {
 	Sprite top0,    // left side, for the record
 	Sprite bottom0,
@@ -641,7 +640,8 @@ void entity_destiny ( pointer.Entity ent ) {
 // ============================================================================
 // load a map onto the ppu
 void init_map (	pointer.word locations, pointer location_tiles,
-		pointer.word ranges, pointer range_tiles,
+		pointer.word horiz_ranges, pointer horiz_tiles,
+		pointer.word vert_ranges, pointer vert_tiles,
 		pointer pallete, pointer attrs ) {
 	byte i
 	word j
@@ -653,21 +653,45 @@ void init_map (	pointer.word locations, pointer location_tiles,
 	load_attr_table( attrs )
 
 	blank_bg()
-
 	read_ppu_status()
+
+	init_map_horiz_ranges( horiz_ranges, horiz_tiles )
+	init_map_vert_ranges ( vert_ranges, vert_tiles )
+	init_map_locations( locations, location_tiles )
+
+}
+
+// init_map helpers
+// -----------------
+macro void init_map_horiz_ranges ( pointer.word horiz_ranges, pointer horiz_tiles ) {
+	const byte horiz_inc = $1
+	ppu_load_range( horiz_ranges, horiz_tiles, horiz_inc )
+}
+
+macro void init_map_vert_ranges ( pointer.word vert_ranges, pointer vert_tiles ) {
+	const byte vert_inc = $20
+	ppu_load_range( vert_ranges, vert_tiles, vert_inc )
+}
+
+macro void init_map_locations ( pointer.word locations, pointer location_tiles ) {
 	i = 0
 	while ( locations[i] != nullchar ) {
 		ppu_set_addr(ppu_nametable_ram + locations[i]) 
 		ppu_write_data(location_tiles[i])
 		i += 1
 	}
+}
 
+macro void ppu_load_range ( pointer.word ranges, pointer tiles, byte increment ) {
 	i = 0
+	last_range = 0
 	while ( ranges[i] != nullchar ) {
 		if last_range != 0 {
-			ppu_set_addr(ppu_nametable_ram + ranges[i-1])
-			for j,ranges[i-1],to,ranges[i] {
-				ppu_write_data(range_tiles[i/2])
+			j = ranges[i-1]
+			while ( j <= ranges[i] ) {
+				ppu_set_addr( ppu_nametable_ram + j )
+				ppu_write_data(tiles[i/2]) // bug when i==1?
+				j += increment
 			}
 			last_range = 0
 		} else {
@@ -677,48 +701,34 @@ void init_map (	pointer.word locations, pointer location_tiles,
 	}
 }
 
-void init_map1_c () {
-	init_map( pointer.word( MAP1_C_LOCATIONS ), MAP1_C_LOCATION_TILES,
-		  pointer.word( MAP1_C_RANGES ), MAP1_C_RANGE_TILES,
-		  MAP1_C_PALLETE, MAP1_C_ATTRS )
-}
 
 // -------------------------------------
 // MAP DATA
 // -------------------------------------
 // map1: construction site
-// not the most efficient way to store this data.
-// _RANGES is for horizontal lines, left to right.
-// _LOCATIONS should only be used for one-off, random blocks. right now it's used
-// for manually typing in vertical lines, gross.
+void init_map1_c () {
+	init_map( pointer.word( MAP1_C_LOCATIONS ), MAP1_C_LOCATION_TILES,
+		  pointer.word( MAP1_C_HORIZ ), MAP1_C_HORIZ_TILES,
+		  pointer.word( MAP1_C_VERT ), MAP1_C_VERT_TILES,
+		  MAP1_C_PALLETE, MAP1_C_ATTRS )
+}
+
 const array(word) MAP1_C_LOCATIONS = [
-	// border pillars (far left and right)
-	$22,$3D,   $42,$5D,   $62,$7D,   $82,$9D,
-	$A2,$BD,   $C2,$DD,   $E2,$FD,   $102,$11D,
-	$122,$13D, $142,$15D, $162,$17D, $182,$19D,
-	$1A2,$1BD, $1C2,$1DD, $1E2,$1FD, $202,$21D,
-	$222,$23D, $242,$25D, $262,$27D, $282,$29D,
-	$2A2,$2BD, $2C2,$2DD, $2E2,$2FD,
-	// lift up top platform
-	$A,$2A,$4A,$6A,$8A,$AA,$CA,$EA,
-	$15,$35,$55,$75,$95,$B5,$D5,$F5,
-	// lift up bottom platform
-	$26A,$28A,$2AA,$2CA,$2EA,$30A,
-	$275,$295,$2B5,$2D5,$2F5,$315,
+	$22,$3D, $1A2,$1BD, $2E2,$2FD, // bolted parts of arena border
+	$EA,$F5, $26A,$275, // holding up bottom/top platforms w connecting metal
 	nullchar ]
-const array(byte) MAP1_C_LOCATION_TILES = [
-	$81,$81,   $82,$82,   $82,$82,   $82,$82,
-	$82,$82,   $82,$82,   $82,$82,   $82,$82,
-	$82,$82,   $82,$82,   $82,$82,   $82,$82,
-	$81,$81,   $82,$82,   $82,$82,   $82,$82,
-	$82,$82,   $82,$82,   $82,$82,   $82,$82,
-	$82,$82,   $82,$82,   $81,$81,
-	$85,$85,$85,$85,$85,$85,$85,$89,
-	$86,$86,$86,$86,$86,$86,$86,$8A,
-	$87,$85,$85,$85,$85,$85,
-	$88,$86,$86,$86,$86,$86 ]
+const array(byte) MAP1_C_LOCATION_TILES = [ 
+	$81,$81, $81,$81, $81,$81,
+	$89,$8A, $87,$88 ]
 	
-const array(word) MAP1_C_RANGES = [
+const array(word) MAP1_C_VERT = [
+	$22,$2E2, $3D,$2FD,   // arena border (far left & right)
+	$4A,$EA, $55,$F5,       // lift up top platform
+	$26A,$30A, $275,$315, // hold up bottom platform
+	nullchar ]
+const array(byte) MAP1_C_VERT_TILES = [ $82,$82,  $85,$86,  $85,$86 ]
+
+const array(word) MAP1_C_HORIZ = [
 	$340,$3A0, // sandstone subterrain
 	$300,$308, $317,$31F, // brick floor (top)
 	$320,$32E, $331,$33F, // brick floor (second)
@@ -727,7 +737,7 @@ const array(word) MAP1_C_RANGES = [
 	$1A3,$1A8, $1B7,$1BC, // middle platforms
 	$249,$256, // bottom platform
 	nullchar ]
-const array(byte) MAP1_C_RANGE_TILES = [ $84, $83,$83,$83,$83, $80,$80, $80, $80,$80, $80 ]
+const array(byte) MAP1_C_HORIZ_TILES = [ $84,  $83,$83,  $83,$83,  $80,$80,  $80,  $80,$80,  $80 ]
 
 const array(byte) MAP1_C_PALLETE = [ $21, // bg color
 	$29,$1A,$0F,   $00,
