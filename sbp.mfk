@@ -16,8 +16,6 @@ struct Sprite {
 	byte x
 }
 
-
-
 // ============================================================================
 // VARIABLES
 // ============================================================================
@@ -27,6 +25,8 @@ array oam_buffer [256] @$200 // sprite buffer
 word framecounter
 Entity sam @$204  // player character
 Entity baby @$250 // baby character
+pointer.word vert_bumpmap
+pointer.word horiz_bumpmap
 volatile Gamestate gamestate // the current Gamestate
 
 // ============================================================================
@@ -46,6 +46,7 @@ enum Gamestate {
 	STATEGAMEOVER 
 }
 
+const array win_text = "You FdIdg it fuck" ascii
 const array scorebackground = "P1 Score-	" ascii
 const array gameover_msg = "G A M E	O V E R" ascii
 const array title_msg = "Press Start" ascii
@@ -268,7 +269,6 @@ void ingame_init() {
 	
 	//write a full screen of data
 	init_map1_c()
-//	draw_score_text_background()
 
 	ppu_set_scroll(0,0)
 	ppu_wait_vblank() //wait for next vblank before re-enabling NMI
@@ -445,6 +445,23 @@ macro void draw_score_text_background() {
 	}
 }
 
+macro void draw_debug_text( ) {
+	byte i
+//	read_ppu_status()
+//	ppu_set_addr( ppu_nametable_ram+$40 ) // point the PPU to score text's start
+	ppu_set_addr(ppu_nametable_ram+$018B) // point the PPU to the message's start
+	for i,0,until,$0B {
+		ppu_write_data(title_msg[i])
+	}
+//	i = 0
+////	while ( text[i] != nullchar ) {
+//	for i,0,to,$5 {
+//		ppu_write_data( text[i] )
+////		i += 1
+//	}
+}
+	
+
 inline void draw_score() {
 	byte digit01
 	byte digit10
@@ -574,14 +591,12 @@ void entity_sprite ( pointer.Entity ent, byte xx, byte yy, pointer idle, pointer
 // "PHYSICS"
 // -------------------------------------
 void entity_physics ( pointer.Entity ent ) {
+	entity_collision( ent )
 	// if player
 	if ( ent[0].bottom0.tile < $3A ) {
 		entity_jump_physics( ent )
 	}
 
-	if ( ent[0].bottom0.y < BOTTOMWALL - 10 && ent[0].jump == 0 ) {
-		ent[0].top0.y += FALLSPEED
-	}
 
 	if ( ent[0].movement == 1 ) {
 		if ( ent[0].direction == 0 ) {
@@ -592,14 +607,97 @@ void entity_physics ( pointer.Entity ent ) {
 	}
 }
 
-// frankly, this is just terrible. reeeee !!!!
+// go tile-by-tile (ugh)
+void entity_collision ( pointer.Entity ent ) {
+	bool horiz_collide, vert_collide
+	word spr_tile
+	spr_tile = sprite_tile( pointer.Sprite(ent[0].bottom0.addr) )
+	horiz_collide = within_tile_range( spr_tile,  pointer.word(MAP1_C_HORIZ_BUMPMAP), $1 ) 
+//	vert_collide = within_tile_range( spr_tile,  pointer.word(MAP1_C_VERT_BUMPMAP), $20 ) 
+//	vert_collide = true
+
+	if ( horiz_collide == false ) {
+		if ( ent[0].jump == 1  &&  ent[0].dircount == 0 ) {  // disallow moon-jumping
+			ent[0].jump = 0
+		}
+		if ( ent[0].jump == 0 ) {
+			ent[0].top0.y += FALLSPEED
+		}
+	}
+	if ( vert_collide == true ) {
+		if ( ent[0].direction == 0 ) {
+			ent[0].movement = 0
+			ent[0].top0.x += 1
+		}
+		else if ( ent[0].direction == 1 ) {
+			ent[0].movement = 0
+			ent[0].top0.x -= 1
+		}
+	}
+}
+
+// return a Sprite's tile, based on its x/y values
+word sprite_tile ( pointer.Sprite spr ) {
+	word x
+	word y
+	x =  spr[0].x
+	y =  spr[0].y
+	x /= $8
+	y /= $8
+	y *= $20
+	y -= $20
+	return x + y
+}
+	
+// return whether or not a Sprite is within a list of background tiles
+bool within_tiles ( pointer.Sprite spr, pointer.word tiles ) {
+	byte i
+	word spr_tile
+	spr_tile = sprite_tile( spr )
+
+	i = 0
+	while ( tiles[i] != nullchar ) {
+		if ( tiles[i] == spr_tile ) {
+//			draw_debug_text()
+			return true
+		}
+		i += 1
+	}
+	return false
+}
+
+// return whether or not a Sprite is within a list of background tiles
+bool within_tile_range ( word spr_tile, pointer.word tiles, byte increment ) {
+	byte i
+	word j
+	byte last_range
+
+	i = 0
+	j = 0
+	last_range = 0
+	while ( tiles[i] != nullchar ) {
+		if ( last_range != 0 ) {
+			j = tiles[i - 1]
+			while ( j <= tiles[i] ) {
+				if ( spr_tile == j ) {
+					return true
+				}
+				j += increment
+			}
+			last_range = 0
+		} else {
+			last_range = 1
+		}
+		i += 1
+	}
+	return false
+}
+
+// frankly, this is just terrible. reeeee ????
 // please replace this, please replace this, please replace this
 // oh gods almightly please please please
 void entity_jump_physics ( pointer.Entity ent ) {
-	if ( ent[0].bottom0.y < BOTTOMWALL - 10 && ent[0].jump == 1 && ent[0].dircount == 0 ) {
-		// if not on ground, don't start jumping
-		ent[0].jump = 0
-	} else if ( ent[0].jump == 1 )
+	if ( ent[0].jump == 1 )
 	{
 		// a meager attempt at replicating scb's jump arc
 		// a few deficiencies: 
@@ -642,6 +740,7 @@ void entity_destiny ( pointer.Entity ent ) {
 void init_map (	pointer.word locations, pointer location_tiles,
 		pointer.word horiz_ranges, pointer horiz_tiles,
 		pointer.word vert_ranges, pointer vert_tiles,
+		pointer.word horiz_bumps, pointer.word vert_bumps,
 		pointer pallete, pointer attrs ) {
 	byte i
 	word j
@@ -658,7 +757,9 @@ void init_map (	pointer.word locations, pointer location_tiles,
 	init_map_horiz_ranges( horiz_ranges, horiz_tiles )
 	init_map_vert_ranges ( vert_ranges, vert_tiles )
 	init_map_locations( locations, location_tiles )
-
+	
+	horiz_bumpmap = horiz_bumps
+	vert_bumpmap  = vert_bumps
 }
 
 // init_map helpers
@@ -710,8 +811,10 @@ void init_map1_c () {
 	init_map( pointer.word( MAP1_C_LOCATIONS ), MAP1_C_LOCATION_TILES,
 		  pointer.word( MAP1_C_HORIZ ), MAP1_C_HORIZ_TILES,
 		  pointer.word( MAP1_C_VERT ), MAP1_C_VERT_TILES,
+		  pointer.word( MAP1_C_HORIZ_BUMPMAP ), pointer.word( MAP1_C_VERT_BUMPMAP ),
 		  MAP1_C_PALLETE, MAP1_C_ATTRS )
 }
+
 
 const array(word) MAP1_C_LOCATIONS = [
 	$22,$3D, $1A2,$1BD, $2E2,$2FD, // bolted parts of arena border
@@ -748,11 +851,14 @@ const array(byte) MAP1_C_PALLETE = [ $21, // bg color
 	// sandstone
 	$2B,$2B,$1A ]
 
+const array(word) MAP1_C_VERT_BUMPMAP  = [ $22,$2E2, $3D,$2FD, nullchar ] // arena border
+alias MAP1_C_HORIZ_BUMPMAP = MAP1_C_HORIZ
+
 const word MAP1_C_SPAWN = $2F
 const word MAP1_C_FIRE = $34E
 
 // palette selections for the ppu tiles
-// also not the most efficient way to store this data. (... clearly) !!!!
+// also not the most efficient way to store this data. (... clearly) ????
 // %DownRight DownLeft TopRight TopLeft
 const array(byte) MAP1_C_ATTRS = [
   %01010101, %10101010, %10101010, %10101010, %10101010, %10101010, %10101010, %01010101,
